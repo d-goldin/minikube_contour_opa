@@ -1,0 +1,83 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: opa
+  labels:
+    app: opa
+  namespace: projectcontour
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opa
+  template:
+    metadata:
+      labels:
+        app: opa
+    spec:
+      containers:
+        - name: opa
+          image: openpolicyagent/opa:0.28.0-envoy
+          ports:
+            - containerPort: 9191
+          securityContext:
+            runAsUser: 1111
+          args:
+          - "run"
+          - "--server"
+          - "--log-level=info"
+          - "--addr=localhost:8181"
+          - "--diagnostic-addr=0.0.0.0:8282"
+          - "--set=plugins.envoy_ext_authz_grpc.addr=:9191"
+          - "--set=plugins.envoy_ext_authz_grpc.query=data.envoy.authz.allow"
+          - "--set=plugins.envoy_ext_authz_grpc.enable-reflection=false"
+          - "--set=decision_logs.console=true"
+          - "--ignore=.*"
+          - "/policy/policy.rego"
+          volumeMounts:
+          - readOnly: true
+            mountPath: /policy
+            name: opa-policy
+          livenessProbe:
+            httpGet:
+              path: /health?plugins
+              scheme: HTTP
+              port: 8282
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health?plugins
+              scheme: HTTP
+              port: 8282
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: opa-policy
+          secret:
+            secretName: opa-policy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+spec:
+  selector:
+    app: opa
+  ports:
+    - protocol: TCP
+      port: 9191
+      targetPort: 9191
+---
+apiVersion: projectcontour.io/v1alpha1
+kind: ExtensionService
+metadata:
+  name: opa-extsvc
+  namespace: projectcontour
+spec:
+  # This is needed for OPA, as it doesn't support
+  # TLS in the opa-envoy-plugin.
+  protocol: h2c
+  services:
+  - name: opa
+    port: 9191
